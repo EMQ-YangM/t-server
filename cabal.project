@@ -19,4 +19,4 @@ source-repository-package
 source-repository-package
   type: git
   location: https://github.com/EMQ-YangM/fused-effects-process.git
-  tag: a99f8442839e228e039fc73e2d77c98ab5a9a3a4
+  tag: b0ed35aa56677baadc37734b154f3061ba294014

@@ -23,7 +23,7 @@ import qualified Data.Map as Map
 import GHC.Generics (Generic)
 import Network.Wai.Handler.Warp
 import Process.HasGroup as G
-import Process.HasPeerGroup
+import Process.HasPeer
   ( NodeState (..),
     runWithPeers',
   )
@@ -92,7 +92,7 @@ app mnt tchan =
       api
       ( runM @Handler
           . runWithServer @"log" tchan
-          . runWithWorkGroup' @"group" (WorkGroupState mnt)
+          . runWithGroup @"group" (WorkGroupState mnt)
       )
       (s1 :<|> s2)
 

@@ -35,8 +35,8 @@ import Control.Monad.IO.Class (MonadIO (..))
 import Data.Aeson (FromJSON)
 import Data.Aeson.Types (ToJSON)
 import GHC.Generics
-import Process.HasPeerGroup
-  ( HasPeerGroup,
+import Process.HasPeer
+  ( HasPeer,
     callAll,
     callById,
   )
@@ -138,7 +138,7 @@ t1 ::
     Has (Metric NodeMet) sig m,
     Has (MessageChan SigNode) sig m,
     HasServer "log" SigLog '[Log] sig m,
-    HasPeerGroup "peer" SigRPC '[CallMsg, ChangeMaster] sig m
+    HasPeer "peer" SigRPC '[CallMsg, ChangeMaster] sig m
   ) =>
   m ()
 t1 = forever $ do
