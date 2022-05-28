@@ -2,6 +2,8 @@
 {-# LANGUAGE BlockArguments #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
@@ -24,31 +26,31 @@ import Control.Carrier.State.Strict
   ( State,
     get,
     put,
-    runState,
   )
 import Control.Concurrent
 import Control.Concurrent.STM (atomically)
 import Control.Concurrent.STM.TMVar (readTMVar)
-import Control.Monad (forM, forM_, forever, void)
+import Control.Monad (forM, forever)
 import Control.Monad.IO.Class (MonadIO (..))
-import qualified Data.Map as Map
+import Data.Aeson (FromJSON)
+import Data.Aeson.Types (ToJSON)
+import GHC.Generics
 import Process.HasPeerGroup
   ( HasPeerGroup,
-    NodeState (..),
     callAll,
     callById,
-    runWithPeers',
   )
-import Process.HasServer (HasServer, cast, runWithServer)
+import Process.HasServer (HasServer)
+import qualified Process.HasServer as S
 import Process.Metric
-import Process.TChan (newTChanIO)
 import Process.TH
 import Process.Type
 import Process.Util
 import System.Random
 import Prelude hiding (log)
 
-data Role = Master | Slave deriving (Show)
+data Role = Master | Slave
+  deriving (Show, Generic, FromJSON, ToJSON)
 
 data ChangeMaster where
   ChangeMaster :: RespVal () %1 -> ChangeMaster
@@ -65,10 +67,22 @@ data Cal where
 data CS where
   CS :: String -> CS
 
+data Status where
+  Status :: RespVal [(String, Int)] %1 -> Status
+
+data NodeStatus where
+  NodeStatus :: RespVal (Role, [(String, Int)]) %1 -> NodeStatus
+
+mkSigAndClass
+  "SigNode"
+  [ ''NodeStatus
+  ]
+
 mkSigAndClass
   "SigLog"
   [ ''Log,
-    ''Cal
+    ''Cal,
+    ''Status
   ]
 
 mkSigAndClass
@@ -106,6 +120,8 @@ log = forever $ do
       all <- getVal all_all
       liftIO $ print (val, all)
       putVal all_log 0
+    SigLog3 (Status resp) -> withResp resp $ do
+      getAll @LogMet
 
 t0 ::
   ( MonadIO m,
@@ -113,22 +129,30 @@ t0 ::
   ) =>
   m ()
 t0 = forever $ do
-  cast @"log" Cal
+  S.cast @"log" Cal
   liftIO $ threadDelay 1_000_000
 
 t1 ::
   ( MonadIO m,
     Has (State Role) sig m,
     Has (Metric NodeMet) sig m,
+    Has (MessageChan SigNode) sig m,
     HasServer "log" SigLog '[Log] sig m,
     HasPeerGroup "peer" SigRPC '[CallMsg, ChangeMaster] sig m
   ) =>
   m ()
 t1 = forever $ do
   inc all_a
+  handleFlushMsgs @SigNode $ \case
+    SigNode1 (NodeStatus resp) -> withResp resp $ do
+      rv <- getAll @NodeMet
+      role <- get @Role
+      pure (role, rv)
+
   get @Role >>= \case
     Master -> do
       inc all_b
+      liftIO $ threadDelay 1_0_000
       res <- callAll @"peer" $ CallMsg
       vals <- forM res $ \(a, b) -> do
         val <- liftIO $ atomically $ readTMVar b
@@ -142,43 +166,5 @@ t1 = forever $ do
         SigRPC1 (CallMsg rsp) -> withResp rsp $ do
           liftIO $ randomRIO @Int (1, 1_000_000)
         SigRPC2 (ChangeMaster rsp) -> withResp rsp $ do
-          cast @"log" $ Log ""
+          S.cast @"log" $ Log ""
           put Master
-
-r1 :: IO ()
-r1 = do
-  nodes <- forM [1 .. 4] $ \i -> do
-    tc <- newTChanIO
-    pure (NodeId i, tc)
-  let nodeMap = Map.fromList nodes
-  (h : hs) <- forM nodes $ \(nid, tc) -> do
-    pure (NodeState nid (Map.delete nid nodeMap) tc)
-
-  logChan <- newMessageChan @SigLog
-
-  forkIO $
-    void $
-      runWithServer @"log" logChan t0
-
-  forkIO $
-    void $
-      runMetric @LogMet $
-        runServerWithChan logChan log
-
-  forkIO $
-    void $
-      runWithServer @"log" logChan $
-        runWithPeers' @"peer" h $
-          runMetric @NodeMet $
-            runState Master t1
-
-  forM_ hs $ \h' -> do
-    forkIO $
-      void $
-        runWithServer @"log" logChan $
-          runWithPeers' @"peer" h' $
-            runMetric @NodeMet $
-              runState Slave t1
-
-  forever $ do
-    threadDelay 10_000_000

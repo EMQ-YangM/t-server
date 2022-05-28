@@ -1,8 +1,8 @@
 module Main where
 
-import qualified T
+import qualified S
 
 main :: IO ()
 main = do
   putStrLn "Hello, Haskell!"
-  T.r1
+  S.main
