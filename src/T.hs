@@ -152,7 +152,6 @@ t1 = forever $ do
   get @Role >>= \case
     Master -> do
       inc all_b
-      liftIO $ threadDelay 1_0_000
       res <- callAll @"peer" $ CallMsg
       vals <- forM res $ \(a, b) -> do
         val <- liftIO $ atomically $ readTMVar b
