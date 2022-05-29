@@ -8,10 +8,12 @@
 
 module S where
 
-import Control.Carrier.HasGroup as G
+import Control.Carrier.HasGroup
   ( GroupState (GroupState),
     HasGroup,
     callById,
+    castAll,
+    castById,
     runWithGroup,
     sendAllCall,
   )
@@ -25,9 +27,9 @@ import Control.Carrier.Metric (runMetric)
 import Control.Carrier.State.Strict
   ( runState,
   )
-import Control.Concurrent (forkIO, threadDelay)
+import Control.Concurrent (forkIO)
 import Control.Concurrent.STM (atomically, readTMVar)
-import Control.Monad (forM, forM_, forever, void)
+import Control.Monad (forM, forM_, void)
 import Control.Monad.IO.Class (MonadIO (..))
 import Data.Aeson (FromJSON, ToJSON)
 import Data.Map (Map)
@@ -54,8 +56,10 @@ import Servant
     type (:<|>) (..),
     type (:>),
   )
+import Servant.API.Verbs (Put)
 import T
-  ( LogMet,
+  ( CleanStatus (..),
+    LogMet,
     NodeMet,
     NodeStatus (..),
     Role (..),
@@ -84,6 +88,8 @@ data R = R
 type Api =
   "nodes" :> Get '[JSON] R
     :<|> "nodes" :> Capture "NodeId" Int :> Get '[JSON] RNS
+    :<|> "clean_status" :> Put '[JSON] String
+    :<|> "clean_status" :> Capture "NodeId" Int :> Put '[JSON] String
 
 api :: Proxy Api
 api = Proxy
@@ -97,7 +103,7 @@ s1 ::
   m R
 s1 = do
   vls <- call @"log" Status
-  ns <- G.sendAllCall @"group" NodeStatus
+  ns <- sendAllCall @"group" NodeStatus
   nss <- forM ns $ \(nid, tvar) -> do
     tt <- liftIO $ atomically $ readTMVar tvar
     pure (show nid, tt)
@@ -111,8 +117,29 @@ s2 ::
   Int ->
   m RNS
 s2 i = do
-  (a, b) <- G.callById @"group" (NodeId i) NodeStatus
+  (a, b) <- callById @"group" (NodeId i) NodeStatus
   pure (RNS (show $ NodeId i) a b)
+
+s3 ::
+  ( MonadIO m,
+    HasGroup "group" SigNode '[CleanStatus] sig m,
+    Has (Lift Handler) sig m
+  ) =>
+  m String
+s3 = do
+  castAll @"group" CleanStatus
+  pure "clean all node status"
+
+s4 ::
+  ( MonadIO m,
+    HasGroup "group" SigNode '[CleanStatus] sig m,
+    Has (Lift Handler) sig m
+  ) =>
+  Int ->
+  m String
+s4 i = do
+  castById @"group" (NodeId i) CleanStatus
+  pure $ "clean " ++ show (NodeId i) ++ " node status"
 
 app ::
   Map NodeId (TChan (Some SigNode)) ->
@@ -125,8 +152,9 @@ app mnt tchan =
       ( runM @Handler
           . runWithServer @"log" tchan
           . runWithGroup @"group" (GroupState mnt)
+          . runWithGroup @"group" (GroupState mnt)
       )
-      (s1 :<|> s2)
+      (s1 :<|> s2 :<|> s3 :<|> s4)
 
 main :: IO ()
 main = do

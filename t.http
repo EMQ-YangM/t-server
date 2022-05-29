@@ -1,5 +1,7 @@
 GET http://118.195.180.248:8081/nodes
-
 ###
-
-GET http://118.195.180.248:8081/nodes/2
+PUT http://118.195.180.248:8081/clean_status
+###
+PUT http://118.195.180.248:8081/clean_status/1
+###
+GET http://118.195.180.248:8081/nodes/1

@@ -73,9 +73,13 @@ data Status where
 data NodeStatus where
   NodeStatus :: RespVal (Role, [(String, Int)]) %1 -> NodeStatus
 
+data CleanStatus where
+  CleanStatus :: CleanStatus
+
 mkSigAndClass
   "SigNode"
-  [ ''NodeStatus
+  [ ''NodeStatus,
+    ''CleanStatus
   ]
 
 mkSigAndClass
@@ -151,6 +155,10 @@ t1 = forever $ do
       rv <- getAll @NodeMet
       role <- get @Role
       pure (role, rv)
+    SigNode2 CleanStatus -> do
+      putVal all_a 0
+      putVal all_b 0
+      putVal all_c 0
 
   get @Role >>= \case
     Master -> do
