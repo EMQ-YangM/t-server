@@ -35,14 +35,14 @@ import Control.Monad.IO.Class (MonadIO (..))
 import Data.Aeson (FromJSON)
 import Data.Aeson.Types (ToJSON)
 import GHC.Generics
-import Process.HasPeer
+import Control.Carrier.HasPeer
   ( HasPeer,
     callAll,
     callById,
   )
-import Process.HasServer (HasServer)
-import qualified Process.HasServer as S
-import Process.Metric
+import Control.Carrier.HasServer (HasServer)
+import qualified Control.Carrier.HasServer as S
+import Control.Carrier.Metric
 import Process.TH
 import Process.Type
 import Process.Util
@@ -94,7 +94,8 @@ mkSigAndClass
 mkMetric
   "LogMet"
   [ "all_log",
-    "all_all"
+    "all_all",
+    "rate"
   ]
 
 mkMetric
@@ -119,6 +120,7 @@ log = forever $ do
       val <- getVal all_log
       all <- getVal all_all
       liftIO $ print (val, all)
+      putVal rate val
       putVal all_log 0
     SigLog3 (Status resp) -> withResp resp $ do
       getAll @LogMet
@@ -143,6 +145,7 @@ t1 ::
   m ()
 t1 = forever $ do
   inc all_a
+
   handleFlushMsgs @SigNode $ \case
     SigNode1 (NodeStatus resp) -> withResp resp $ do
       rv <- getAll @NodeMet

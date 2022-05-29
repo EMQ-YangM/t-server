@@ -2,38 +2,70 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeOperators #-}
 
 module S where
 
-import Control.Carrier.Lift hiding (run)
+import Control.Carrier.HasGroup as G
+  ( GroupState (GroupState),
+    HasGroup,
+    callById,
+    runWithGroup,
+    sendAllCall,
+  )
+import Control.Carrier.HasPeer
+  ( PeerState (..),
+    runWithPeers,
+  )
+import Control.Carrier.HasServer (HasServer, call, runWithServer)
+import Control.Carrier.Lift (Has, Lift, runM)
+import Control.Carrier.Metric (runMetric)
 import Control.Carrier.State.Strict
   ( runState,
   )
-import Control.Concurrent
+import Control.Concurrent (forkIO, threadDelay)
 import Control.Concurrent.STM (atomically, readTMVar)
-import Control.Monad
-import Control.Monad.IO.Class
-import Data.Aeson
+import Control.Monad (forM, forM_, forever, void)
+import Control.Monad.IO.Class (MonadIO (..))
+import Data.Aeson (FromJSON, ToJSON)
 import Data.Map (Map)
 import qualified Data.Map as Map
 import GHC.Generics (Generic)
 import Network.Wai.Handler.Warp
-import Process.HasGroup as G
-import Process.HasPeer
-  ( NodeState (..),
-    runWithPeers',
+  ( defaultSettings,
+    runSettings,
+    setHost,
+    setPort,
   )
-import Process.HasServer
-import Process.Metric
 import Process.TChan (TChan, newTChanIO)
-import Process.Type
-import Process.Util
-import Servant hiding (HasServer)
+import Process.Type (NodeId (..), Some)
+import Process.Util (newMessageChan, runServerWithChan)
+import Servant
+  ( Application,
+    Capture,
+    Get,
+    Handler,
+    JSON,
+    Proxy (..),
+    hoistServer,
+    serve,
+    type (:<|>) (..),
+    type (:>),
+  )
 import T
+  ( LogMet,
+    NodeMet,
+    NodeStatus (..),
+    Role (..),
+    SigLog,
+    SigNode,
+    Status (..),
+    log,
+    t0,
+    t1,
+  )
 import Prelude hiding (log)
 
 data RNS = RNS
@@ -92,7 +124,7 @@ app mnt tchan =
       api
       ( runM @Handler
           . runWithServer @"log" tchan
-          . runWithGroup @"group" (WorkGroupState mnt)
+          . runWithGroup @"group" (GroupState mnt)
       )
       (s1 :<|> s2)
 
@@ -104,7 +136,7 @@ main = do
   let nodeMap = Map.fromList nodes
   hhs@(h : hs) <- forM nodes $ \(nid, tc) -> do
     nchan <- newMessageChan @SigNode
-    pure ((nid, nchan), NodeState nid (Map.delete nid nodeMap) tc)
+    pure ((nid, nchan), PeerState nid (Map.delete nid nodeMap) tc)
 
   logChan <- newMessageChan @SigLog
 
@@ -121,7 +153,7 @@ main = do
     void $
       runWithServer @"log" logChan $
         runServerWithChan @SigNode (snd $ fst h) $
-          runWithPeers' @"peer" (snd h) $
+          runWithPeers @"peer" (snd h) $
             runMetric @NodeMet $
               runState Master t1
 
@@ -130,7 +162,7 @@ main = do
       void $
         runWithServer @"log" logChan $
           runServerWithChan @SigNode (snd $ fst h') $
-            runWithPeers' @"peer" (snd h') $
+            runWithPeers @"peer" (snd h') $
               runMetric @NodeMet $
                 runState Slave t1
 
