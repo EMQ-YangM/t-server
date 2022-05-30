@@ -22,7 +22,7 @@ import Control.Carrier.HasPeer
     runWithPeers,
   )
 import Control.Carrier.HasServer (HasServer, call, cast, runWithServer)
-import Control.Carrier.Lift (Has, Lift, runM)
+import Control.Carrier.Lift (runM)
 import Control.Carrier.Metric (runMetric)
 import Control.Carrier.State.Strict
   ( runState,
@@ -98,8 +98,7 @@ api = Proxy
 s1 ::
   ( MonadIO m,
     HasServer "log" SigLog '[Status] sig m,
-    HasGroup "group" SigNode '[NodeStatus] sig m,
-    Has (Lift Handler) sig m
+    HasGroup "group" SigNode '[NodeStatus] sig m
   ) =>
   m R
 s1 = do
@@ -112,7 +111,6 @@ s1 = do
 
 s2 ::
   ( MonadIO m,
-    Has (Lift Handler) sig m,
     HasGroup "group" SigNode '[NodeStatus] sig m
   ) =>
   Int ->
@@ -123,8 +121,7 @@ s2 i = do
 
 s3 ::
   ( MonadIO m,
-    HasGroup "group" SigNode '[CleanStatus] sig m,
-    Has (Lift Handler) sig m
+    HasGroup "group" SigNode '[CleanStatus] sig m
   ) =>
   m String
 s3 = do
@@ -133,8 +130,7 @@ s3 = do
 
 s4 ::
   ( MonadIO m,
-    HasGroup "group" SigNode '[CleanStatus] sig m,
-    Has (Lift Handler) sig m
+    HasGroup "group" SigNode '[CleanStatus] sig m
   ) =>
   Int ->
   m String
@@ -144,8 +140,7 @@ s4 i = do
 
 s5 ::
   ( MonadIO m,
-    HasServer "log" SigLog '[CleanStatus] sig m,
-    Has (Lift Handler) sig m
+    HasServer "log" SigLog '[CleanStatus] sig m
   ) =>
   m String
 s5 = do
