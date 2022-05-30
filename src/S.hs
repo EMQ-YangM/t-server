@@ -62,6 +62,7 @@ import Servant
 import Servant.API.Verbs (Put)
 import T
   ( Auth (..),
+    AuthMetric,
     CleanStatus (..),
     LogMet,
     NodeMet,
@@ -79,15 +80,15 @@ import T
 import Prelude hiding (log)
 
 data RNS = RNS
-  { nnoid :: String,
-    nrole :: Role,
+  { nrole :: Role,
     nmetrics :: Map String Int
   }
   deriving (Show, Generic, FromJSON, ToJSON)
 
 data R = R
   { rmetric :: Map String Int,
-    rnodes :: [RNS]
+    rauth :: Map String Int,
+    rnodes :: Map Int RNS
   }
   deriving (Show, Generic, FromJSON, ToJSON)
 
@@ -104,24 +105,26 @@ api = Proxy
 s1 ::
   ( MonadIO m,
     HasServer "log" SigLog '[Status] sig m,
+    HasServer "auth" SigAuth '[Status] sig m,
     HasGroup "group" SigNode '[NodeStatus] sig m
   ) =>
   m R
 s1 = do
   vls <- call @"log" Status
+
   ns <- sendAllCall @"group" NodeStatus
-  nss <- forM ns $ \(nid, tvar) -> do
-    tt <- liftIO $ atomically $ readTMVar tvar
-    pure (show nid, tt)
+
+  nss <- forM ns $ \(NodeId nid, tvar) -> do
+    (role, tt) <- liftIO $ atomically $ readTMVar tvar
+    pure (nid, RNS role $ Map.fromList tt)
+
+  authMs <- call @"auth" Status
+
   pure $
     R
       (Map.fromList vls)
-      ( map
-          ( \(a, (b, c)) ->
-              RNS a b (Map.fromList c)
-          )
-          nss
-      )
+      (Map.fromList authMs)
+      (Map.fromList nss)
 
 s2 ::
   ( MonadIO m,
@@ -131,7 +134,7 @@ s2 ::
   m RNS
 s2 i = do
   (a, b) <- callById @"group" (NodeId i) NodeStatus
-  pure (RNS (show $ NodeId i) a (Map.fromList b))
+  pure (RNS a (Map.fromList b))
 
 s3 ::
   ( MonadIO m,
@@ -196,6 +199,7 @@ app mnt tchan authChan =
           . runWithServer @"log" tchan
           . runWithServer @"log" tchan
           . runWithServer @"auth" authChan
+          . runWithServer @"auth" authChan
           . runWithGroup @"group" (GroupState mnt)
           . runWithGroup @"group" (GroupState mnt)
       )
@@ -220,6 +224,7 @@ main = do
   forkIO
     . void
     . runReader (Set.fromList ls)
+    . runMetric @AuthMetric
     $ runServerWithChan authChan auth
 
   forkIO

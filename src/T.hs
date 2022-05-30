@@ -84,7 +84,8 @@ data Auth where
 
 mkSigAndClass
   "SigAuth"
-  [ ''Auth
+  [ ''Auth,
+    ''Status
   ]
 
 mkSigAndClass
@@ -121,9 +122,16 @@ mkMetric
     "all_c"
   ]
 
+mkMetric
+  "AuthMetric"
+  [ "auth_success",
+    "auth_failed"
+  ]
+
 auth ::
   ( MonadIO m,
     Has (Reader (Set String)) sig m,
+    Has (Metric AuthMetric) sig m,
     Has (MessageChan SigAuth) sig m
   ) =>
   m ()
@@ -132,8 +140,14 @@ auth = forever $ do
     SigAuth1 (Auth name resp) -> withResp resp $ do
       names <- ask
       if Set.member name names
-        then pure True
-        else pure False
+        then do
+          inc auth_success
+          pure True
+        else do
+          inc auth_failed
+          pure False
+    SigAuth2 (Status resp) ->
+      withResp resp $ getAll @AuthMetric
 
 log ::
   ( MonadIO m,
