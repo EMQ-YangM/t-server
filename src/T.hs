@@ -26,7 +26,7 @@ import Control.Carrier.HasPeer
     callAll,
     callById,
   )
-import Control.Carrier.HasServer (HasServer)
+import Control.Carrier.HasServer (HasServer, cast)
 import qualified Control.Carrier.HasServer as S
 import Control.Carrier.Metric
 import Control.Carrier.Reader
@@ -64,6 +64,9 @@ data CallMsg where
 data Log where
   Log :: String -> Log
 
+data AuthLog where
+  AuthLog :: (String, Bool) -> AuthLog
+
 data Cal where
   Cal :: Cal
 
@@ -99,7 +102,8 @@ mkSigAndClass
   [ ''Log,
     ''Cal,
     ''Status,
-    ''CleanStatus
+    ''CleanStatus,
+    ''AuthLog
   ]
 
 mkSigAndClass
@@ -132,7 +136,8 @@ auth ::
   ( MonadIO m,
     Has (Reader (Set String)) sig m,
     Has (Metric AuthMetric) sig m,
-    Has (MessageChan SigAuth) sig m
+    Has (MessageChan SigAuth) sig m,
+    HasServer "log" SigLog '[AuthLog] sig m
   ) =>
   m ()
 auth = forever $ do
@@ -141,9 +146,11 @@ auth = forever $ do
       names <- ask
       if Set.member name names
         then do
+          cast @"log" $ AuthLog (name, True)
           inc auth_success
           pure True
         else do
+          cast @"log" $ AuthLog (name, False)
           inc auth_failed
           pure False
     SigAuth2 (Status resp) ->
@@ -170,6 +177,8 @@ log = forever $ do
       getAll @LogMet
     SigLog4 CleanStatus -> do
       reset @LogMet
+    SigLog5 (AuthLog al) -> do
+      liftIO $ print al
 
 t0 ::
   ( MonadIO m,

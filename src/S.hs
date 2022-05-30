@@ -225,6 +225,7 @@ main = do
     . void
     . runReader (Set.fromList ls)
     . runMetric @AuthMetric
+    . runWithServer @"log" logChan
     $ runServerWithChan authChan auth
 
   forkIO
