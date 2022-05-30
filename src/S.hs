@@ -2,6 +2,7 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeOperators #-}
@@ -24,6 +25,7 @@ import Control.Carrier.HasPeer
 import Control.Carrier.HasServer (HasServer, call, cast, runWithServer)
 import Control.Carrier.Lift (runM)
 import Control.Carrier.Metric (runMetric)
+import Control.Carrier.Reader
 import Control.Carrier.State.Strict
   ( runState,
   )
@@ -34,6 +36,7 @@ import Control.Monad.IO.Class (MonadIO (..))
 import Data.Aeson (FromJSON, ToJSON)
 import Data.Map (Map)
 import qualified Data.Map as Map
+import qualified Data.Set as Set
 import GHC.Generics (Generic)
 import Network.Wai.Handler.Warp
   ( defaultSettings,
@@ -58,14 +61,17 @@ import Servant
   )
 import Servant.API.Verbs (Put)
 import T
-  ( CleanStatus (..),
+  ( Auth (..),
+    CleanStatus (..),
     LogMet,
     NodeMet,
     NodeStatus (..),
     Role (..),
+    SigAuth,
     SigLog,
     SigNode,
     Status (..),
+    auth,
     log,
     t0,
     t1,
@@ -75,12 +81,12 @@ import Prelude hiding (log)
 data RNS = RNS
   { nnoid :: String,
     nrole :: Role,
-    nmetrics :: [(String, Int)]
+    nmetrics :: Map String Int
   }
   deriving (Show, Generic, FromJSON, ToJSON)
 
 data R = R
-  { rmetric :: [(String, Int)],
+  { rmetric :: Map String Int,
     rnodes :: [RNS]
   }
   deriving (Show, Generic, FromJSON, ToJSON)
@@ -88,9 +94,9 @@ data R = R
 type Api =
   "nodes" :> Get '[JSON] R
     :<|> "nodes" :> Capture "NodeId" Int :> Get '[JSON] RNS
-    :<|> "clean_status" :> Put '[JSON] String
-    :<|> "clean_status" :> Capture "NodeId" Int :> Put '[JSON] String
-    :<|> "clean_log_status" :> Put '[JSON] String
+    :<|> "clean_status" :> Capture "user name" String :> Put '[JSON] String
+    :<|> "clean_status" :> Capture "user name" String :> Capture "NodeId" Int :> Put '[JSON] String
+    :<|> "clean_log_status" :> Capture "user name" String :> Put '[JSON] String
 
 api :: Proxy Api
 api = Proxy
@@ -107,7 +113,15 @@ s1 = do
   nss <- forM ns $ \(nid, tvar) -> do
     tt <- liftIO $ atomically $ readTMVar tvar
     pure (show nid, tt)
-  pure $ R vls (map (\(a, (b, c)) -> RNS a b c) nss)
+  pure $
+    R
+      (Map.fromList vls)
+      ( map
+          ( \(a, (b, c)) ->
+              RNS a b (Map.fromList c)
+          )
+          nss
+      )
 
 s2 ::
   ( MonadIO m,
@@ -117,47 +131,71 @@ s2 ::
   m RNS
 s2 i = do
   (a, b) <- callById @"group" (NodeId i) NodeStatus
-  pure (RNS (show $ NodeId i) a b)
+  pure (RNS (show $ NodeId i) a (Map.fromList b))
 
 s3 ::
   ( MonadIO m,
+    HasServer "auth" SigAuth '[Auth] sig m,
     HasGroup "group" SigNode '[CleanStatus] sig m
   ) =>
+  String ->
   m String
-s3 = do
-  castAll @"group" CleanStatus
-  pure "clean all node status"
+s3 user =
+  authen user $ do
+    castAll @"group" CleanStatus
+    pure "clean all node status"
 
 s4 ::
   ( MonadIO m,
+    HasServer "auth" SigAuth '[Auth] sig m,
     HasGroup "group" SigNode '[CleanStatus] sig m
   ) =>
+  String ->
   Int ->
   m String
-s4 i = do
-  castById @"group" (NodeId i) CleanStatus
-  pure $ "clean " ++ show (NodeId i) ++ " node status"
+s4 user i =
+  authen user $ do
+    castById @"group" (NodeId i) CleanStatus
+    pure $ "clean " ++ show (NodeId i) ++ " node status"
 
 s5 ::
   ( MonadIO m,
+    HasServer "auth" SigAuth '[Auth] sig m,
     HasServer "log" SigLog '[CleanStatus] sig m
   ) =>
+  String ->
   m String
-s5 = do
-  cast @"log" CleanStatus
-  pure "clean log status"
+s5 user =
+  authen user $ do
+    cast @"log" CleanStatus
+    pure "clean log status"
+
+authen ::
+  ( MonadIO m,
+    HasServer "auth" SigAuth '[Auth] sig m
+  ) =>
+  String ->
+  m String ->
+  m String
+authen user fun =
+  call @"auth" (Auth user) >>= \case
+    True -> fun
+    False -> do
+      pure "auth failed"
 
 app ::
   Map NodeId (TChan (Some SigNode)) ->
   TChan (Some SigLog) ->
+  TChan (Some SigAuth) ->
   Application
-app mnt tchan =
+app mnt tchan authChan =
   serve api $
     hoistServer
       api
       ( runM @Handler
           . runWithServer @"log" tchan
           . runWithServer @"log" tchan
+          . runWithServer @"auth" authChan
           . runWithGroup @"group" (GroupState mnt)
           . runWithGroup @"group" (GroupState mnt)
       )
@@ -174,6 +212,15 @@ main = do
     pure ((nid, nchan), PeerState nid (Map.delete nid nodeMap) tc)
 
   logChan <- newMessageChan @SigLog
+
+  authChan <- newMessageChan @SigAuth
+
+  ls <- lines <$> readFile "data/user"
+
+  forkIO
+    . void
+    . runReader (Set.fromList ls)
+    $ runServerWithChan authChan auth
 
   forkIO
     . void
@@ -203,4 +250,4 @@ main = do
 
   putStrLn "start server"
   let mls = Map.fromList $ map fst hhs
-  runSettings (setHost "*4" $ setPort 8081 defaultSettings) (app mls logChan)
+  runSettings (setHost "*4" $ setPort 8081 defaultSettings) (app mls logChan authChan)

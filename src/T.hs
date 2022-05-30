@@ -21,7 +21,6 @@
 
 module T where
 
-import Control.Algebra (Has)
 import Control.Carrier.HasPeer
   ( HasPeer,
     callAll,
@@ -30,6 +29,7 @@ import Control.Carrier.HasPeer
 import Control.Carrier.HasServer (HasServer)
 import qualified Control.Carrier.HasServer as S
 import Control.Carrier.Metric
+import Control.Carrier.Reader
 import Control.Carrier.State.Strict
   ( State,
     get,
@@ -43,6 +43,8 @@ import Control.Monad (forM, forever)
 import Control.Monad.IO.Class (MonadIO (..))
 import Data.Aeson (FromJSON)
 import Data.Aeson.Types (ToJSON)
+import Data.Set (Set)
+import qualified Data.Set as Set
 import GHC.Generics
 import Process.TH
 import Process.Type
@@ -77,6 +79,14 @@ data NodeStatus where
 data CleanStatus where
   CleanStatus :: CleanStatus
 
+data Auth where
+  Auth :: String -> RespVal Bool %1 -> Auth
+
+mkSigAndClass
+  "SigAuth"
+  [ ''Auth
+  ]
+
 mkSigAndClass
   "SigNode"
   [ ''NodeStatus,
@@ -110,6 +120,20 @@ mkMetric
     "all_b",
     "all_c"
   ]
+
+auth ::
+  ( MonadIO m,
+    Has (Reader (Set String)) sig m,
+    Has (MessageChan SigAuth) sig m
+  ) =>
+  m ()
+auth = forever $ do
+  withMessageChan @SigAuth \case
+    SigAuth1 (Auth name resp) -> withResp resp $ do
+      names <- ask
+      if Set.member name names
+        then pure True
+        else pure False
 
 log ::
   ( MonadIO m,
