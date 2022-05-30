@@ -21,7 +21,7 @@ import Control.Carrier.HasPeer
   ( PeerState (..),
     runWithPeers,
   )
-import Control.Carrier.HasServer (HasServer, call, runWithServer)
+import Control.Carrier.HasServer (HasServer, call, cast, runWithServer)
 import Control.Carrier.Lift (Has, Lift, runM)
 import Control.Carrier.Metric (runMetric)
 import Control.Carrier.State.Strict
@@ -90,6 +90,7 @@ type Api =
     :<|> "nodes" :> Capture "NodeId" Int :> Get '[JSON] RNS
     :<|> "clean_status" :> Put '[JSON] String
     :<|> "clean_status" :> Capture "NodeId" Int :> Put '[JSON] String
+    :<|> "clean_log_status" :> Put '[JSON] String
 
 api :: Proxy Api
 api = Proxy
@@ -141,6 +142,16 @@ s4 i = do
   castById @"group" (NodeId i) CleanStatus
   pure $ "clean " ++ show (NodeId i) ++ " node status"
 
+s5 ::
+  ( MonadIO m,
+    HasServer "log" SigLog '[CleanStatus] sig m,
+    Has (Lift Handler) sig m
+  ) =>
+  m String
+s5 = do
+  cast @"log" CleanStatus
+  pure "clean log status"
+
 app ::
   Map NodeId (TChan (Some SigNode)) ->
   TChan (Some SigLog) ->
@@ -151,10 +162,11 @@ app mnt tchan =
       api
       ( runM @Handler
           . runWithServer @"log" tchan
+          . runWithServer @"log" tchan
           . runWithGroup @"group" (GroupState mnt)
           . runWithGroup @"group" (GroupState mnt)
       )
-      (s1 :<|> s2 :<|> s3 :<|> s4)
+      (s1 :<|> s2 :<|> s3 :<|> s4 :<|> s5)
 
 main :: IO ()
 main = do
@@ -168,31 +180,31 @@ main = do
 
   logChan <- newMessageChan @SigLog
 
-  forkIO $
-    void $
-      runMetric @LogMet $
-        runServerWithChan logChan log
+  forkIO
+    . void
+    . runMetric @LogMet
+    $ runServerWithChan logChan log
 
-  forkIO $
-    void $
-      runWithServer @"log" logChan t0
+  forkIO
+    . void
+    $ runWithServer @"log" logChan t0
 
-  forkIO $
-    void $
-      runWithServer @"log" logChan $
-        runServerWithChan @SigNode (snd $ fst h) $
-          runWithPeers @"peer" (snd h) $
-            runMetric @NodeMet $
-              runState Master t1
+  forkIO
+    . void
+    . runWithServer @"log" logChan
+    . runServerWithChan @SigNode (snd $ fst h)
+    . runWithPeers @"peer" (snd h)
+    . runMetric @NodeMet
+    $ runState Master t1
 
   forM_ hs $ \h' -> do
-    forkIO $
-      void $
-        runWithServer @"log" logChan $
-          runServerWithChan @SigNode (snd $ fst h') $
-            runWithPeers @"peer" (snd h') $
-              runMetric @NodeMet $
-                runState Slave t1
+    forkIO
+      . void
+      . runWithServer @"log" logChan
+      . runServerWithChan @SigNode (snd $ fst h')
+      . runWithPeers @"peer" (snd h')
+      . runMetric @NodeMet
+      $ runState Slave t1
 
   putStrLn "start server"
   let mls = Map.fromList $ map fst hhs

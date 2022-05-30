@@ -22,19 +22,6 @@
 module T where
 
 import Control.Algebra (Has)
-import Control.Carrier.State.Strict
-  ( State,
-    get,
-    put,
-  )
-import Control.Concurrent
-import Control.Concurrent.STM (atomically)
-import Control.Concurrent.STM.TMVar (readTMVar)
-import Control.Monad (forM, forever)
-import Control.Monad.IO.Class (MonadIO (..))
-import Data.Aeson (FromJSON)
-import Data.Aeson.Types (ToJSON)
-import GHC.Generics
 import Control.Carrier.HasPeer
   ( HasPeer,
     callAll,
@@ -43,6 +30,20 @@ import Control.Carrier.HasPeer
 import Control.Carrier.HasServer (HasServer)
 import qualified Control.Carrier.HasServer as S
 import Control.Carrier.Metric
+import Control.Carrier.State.Strict
+  ( State,
+    get,
+    put,
+  )
+import Control.Concurrent
+import Control.Concurrent.STM (atomically)
+import Control.Concurrent.STM.TMVar (readTMVar)
+import Control.Effect.Metric (reset)
+import Control.Monad (forM, forever)
+import Control.Monad.IO.Class (MonadIO (..))
+import Data.Aeson (FromJSON)
+import Data.Aeson.Types (ToJSON)
+import GHC.Generics
 import Process.TH
 import Process.Type
 import Process.Util
@@ -86,7 +87,8 @@ mkSigAndClass
   "SigLog"
   [ ''Log,
     ''Cal,
-    ''Status
+    ''Status,
+    ''CleanStatus
   ]
 
 mkSigAndClass
@@ -128,6 +130,8 @@ log = forever $ do
       putVal all_log 0
     SigLog3 (Status resp) -> withResp resp $ do
       getAll @LogMet
+    SigLog4 CleanStatus -> do
+      reset @LogMet
 
 t0 ::
   ( MonadIO m,
@@ -156,9 +160,7 @@ t1 = forever $ do
       role <- get @Role
       pure (role, rv)
     SigNode2 CleanStatus -> do
-      putVal all_a 0
-      putVal all_b 0
-      putVal all_c 0
+      reset @NodeMet
 
   get @Role >>= \case
     Master -> do
