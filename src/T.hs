@@ -33,6 +33,7 @@ import Control.Carrier.Reader
 import Control.Carrier.State.Strict
   ( State,
     get,
+    modify,
     put,
   )
 import Control.Concurrent
@@ -85,10 +86,14 @@ data CleanStatus where
 data Auth where
   Auth :: String -> RespVal Bool %1 -> Auth
 
+data AddUser where
+  AddUser :: String -> String -> RespVal Bool %1 -> AddUser
+
 mkSigAndClass
   "SigAuth"
   [ ''Auth,
-    ''Status
+    ''Status,
+    ''AddUser
   ]
 
 mkSigAndClass
@@ -123,7 +128,8 @@ mkMetric
   "NodeMet"
   [ "all_a",
     "all_b",
-    "all_c"
+    "all_c",
+    "all_handle_get_status"
   ]
 
 mkMetric
@@ -134,7 +140,7 @@ mkMetric
 
 auth ::
   ( MonadIO m,
-    Has (Reader (Set String)) sig m,
+    Has (State (Set String)) sig m,
     Has (Metric AuthMetric) sig m,
     Has (MessageChan SigAuth) sig m,
     HasServer "log" SigLog '[AuthLog] sig m
@@ -143,7 +149,7 @@ auth ::
 auth = forever $ do
   withMessageChan @SigAuth \case
     SigAuth1 (Auth name resp) -> withResp resp $ do
-      names <- ask
+      names <- get
       if Set.member name names
         then do
           cast @"log" $ AuthLog (name, True)
@@ -155,6 +161,14 @@ auth = forever $ do
           pure False
     SigAuth2 (Status resp) ->
       withResp resp $ getAll @AuthMetric
+    SigAuth3 (AddUser super user resp) ->
+      withResp resp $ do
+        names <- get
+        if Set.member super names
+          then do
+            modify (Set.insert user)
+            pure True
+          else pure False
 
 log ::
   ( MonadIO m,
@@ -203,6 +217,7 @@ t1 = forever $ do
 
   handleFlushMsgs @SigNode $ \case
     SigNode1 (NodeStatus resp) -> withResp resp $ do
+      inc all_handle_get_status
       rv <- getAll @NodeMet
       role <- get @Role
       pure (role, rv)

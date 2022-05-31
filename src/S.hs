@@ -25,7 +25,6 @@ import Control.Carrier.HasPeer
 import Control.Carrier.HasServer (HasServer, call, cast, runWithServer)
 import Control.Carrier.Lift (runM)
 import Control.Carrier.Metric (runMetric)
-import Control.Carrier.Reader
 import Control.Carrier.State.Strict
   ( runState,
   )
@@ -59,9 +58,10 @@ import Servant
     type (:<|>) (..),
     type (:>),
   )
-import Servant.API.Verbs (Put)
+import Servant.API.Verbs (Patch, Put)
 import T
-  ( Auth (..),
+  ( AddUser (..),
+    Auth (..),
     AuthMetric,
     CleanStatus (..),
     LogMet,
@@ -98,6 +98,7 @@ type Api =
     :<|> "clean_status" :> Capture "user name" String :> Put '[JSON] String
     :<|> "clean_status" :> Capture "user name" String :> Capture "NodeId" Int :> Put '[JSON] String
     :<|> "clean_log_status" :> Capture "user name" String :> Put '[JSON] String
+    :<|> "add_user" :> Capture "super user name" String :> Capture "user name" String :> Patch '[JSON] String
 
 api :: Proxy Api
 api = Proxy
@@ -173,6 +174,18 @@ s5 user =
     cast @"log" CleanStatus
     pure "clean log status"
 
+s6 ::
+  ( MonadIO m,
+    HasServer "auth" SigAuth '[AddUser] sig m
+  ) =>
+  String ->
+  String ->
+  m String
+s6 super user = do
+  call @"auth" (AddUser super user) >>= \case
+    True -> pure "add user success"
+    False -> pure "add user failed, auth failed"
+
 authen ::
   ( MonadIO m,
     HasServer "auth" SigAuth '[Auth] sig m
@@ -200,10 +213,11 @@ app mnt tchan authChan =
           . runWithServer @"log" tchan
           . runWithServer @"auth" authChan
           . runWithServer @"auth" authChan
+          . runWithServer @"auth" authChan
           . runWithGroup @"group" (GroupState mnt)
           . runWithGroup @"group" (GroupState mnt)
       )
-      (s1 :<|> s2 :<|> s3 :<|> s4 :<|> s5)
+      (s1 :<|> s2 :<|> s3 :<|> s4 :<|> s5 :<|> s6)
 
 main :: IO ()
 main = do
@@ -223,7 +237,7 @@ main = do
 
   forkIO
     . void
-    . runReader (Set.fromList ls)
+    . runState (Set.fromList ls)
     . runMetric @AuthMetric
     . runWithServer @"log" logChan
     $ runServerWithChan authChan auth
